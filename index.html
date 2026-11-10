@@ -172,7 +172,7 @@ main{flex:1;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.4fr) min
     <div class="kpi exp"><span class="l">유효기간 안내 필요</span><span class="v num" id="v-exp">–</span></div>
   </div>
   <div class="tools">
-    <span class="conn" id="conn">연결 중…</span>
+    <span class="conn" id="conn">연결 중…</span> <span class="conn" id="myRole" title="이 보드에서 내 권한">권한 확인 중</span>
     <label class="hint" for="who">보기</label><select id="who"></select>
     <button class="btn" id="ruleBtn">이용 규칙</button>
     <button class="btn" id="noteBtn">업무절차</button>
@@ -216,7 +216,7 @@ const ST={tasks:[],recs:[],recdone:new Set(),notes:[],expiry:[],areas:DEFAULT_AR
   loaded:{tasks:false,recs:false,recdone:false,notes:false,expiry:false}};
 let _w='all';try{_w=localStorage.getItem('team-board-who')||'all'}catch(e){}
 const UI={who:_w,showDone:false,right:'rec',calY:new Date().getFullYear(),calM:new Date().getMonth()};
-let db=null,user=null,me=null,isAdmin=false;
+let db=null,user=null,me=null,isAdmin=false,canWrite=null,roleName='확인 중';
 
 /* ============ 날짜 ============ */
 const DOW=['일','월','화','수','목','금','토'];
@@ -402,14 +402,17 @@ function renderWho(){
 }
 
 /* ============ 저장소 ============ */
-let toastT;function toast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>e.classList.remove('show'),2800)}
+let toastT;function toast(m){const e=document.getElementById('toast');e.textContent=m;e.classList.add('show');clearTimeout(toastT);toastT=setTimeout(()=>e.classList.remove('show'),m.length>40?6000:2800)}
 function setConn(text,bad){const c=document.getElementById('conn');c.textContent=text;c.classList.toggle('bad',!!bad)}
 async function write(fn,okMsg){
   if(!db){toast('저장소에 연결되지 않아 저장할 수 없어요');return false}
   try{await fn();if(okMsg)toast(okMsg);return true}
   catch(e){
     if(e&&e.code==='unavailable'){await new Promise(r=>setTimeout(r,700));try{await fn();if(okMsg)toast(okMsg);return true}catch(e2){}}
-    toast(e&&e.code==='permission_denied'?'이 작업을 할 권한이 없어요. 보드 관리자에게 문의하세요.':e&&e.code==='quota_exceeded'?'저장 공간이 가득 찼어요.':'저장하지 못했어요. 잠시 후 다시 시도해 주세요.');return false;
+    const code=String(e&&(e.code||e.name)||'unknown');
+    try{console.warn('[board] write failed',code,e&&e.message)}catch(_){}
+    const denied=/permission|denied|not[-_]?found|forbidden|unauth/i.test(code);
+    toast(denied?'저장 권한이 없어요 (내 권한: '+roleName+'). 보드 관리자에게 편집자 권한을 요청하세요. [오류: '+code+']':code==='quota_exceeded'?'저장 공간이 가득 찼어요.':'저장하지 못했어요. 잠시 후 다시 시도해 주세요. [오류: '+code+']');return false;
   }
 }
 const newId=p=>(p||'')+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
@@ -417,7 +420,13 @@ const stamp=()=>({updatedBy:me,updatedAt:todayStr()});
 
 async function start(){
   try{user=await claude.use('user')}catch(e){user=null}
-  if(user){try{isAdmin=!!user.isOwner()}catch(e){isAdmin=false}try{me=await user.id()}catch(e){me=null}}
+  if(user){try{isAdmin=!!user.isOwner()}catch(e){isAdmin=false}try{me=await user.id()}catch(e){me=null}
+    let ed=false;try{ed=!!user.canEdit()}catch(e){}
+    try{const c=user.can('data.write');canWrite=(c===true||c===false)?c:null}catch(e){canWrite=null}
+    roleName=isAdmin?'소유자':ed?'편집자':canWrite===false?'보기 전용':canWrite===true?'기여자':'확인 불가';
+  }else{roleName='로그인 필요';canWrite=false}
+  const rb=document.getElementById('myRole');rb.textContent='내 권한: '+roleName;rb.classList.toggle('bad',canWrite===false);
+  if(canWrite===false)document.querySelectorAll('.add').forEach(b=>b.hidden=true);
   document.getElementById('setBtn').hidden=!isAdmin;
   let ns=null;
   try{ns=await claude.use('db')}catch(e){ns=null}
